@@ -144,7 +144,7 @@ function Avatar({ stream }) {
 }
 
 export default function Page() {
-    const [question, setQuestion] = useState("");
+    const [question, setQuestion] = useState([]);
     const [interviewInfo, setinterviewInfo] = useState([])
     const [qnaId, setQnaId] = useState(null);
     const [answer, setAnswer] = useState("");
@@ -174,14 +174,14 @@ export default function Page() {
                 body: JSON.stringify({ interviewId, context }),
             });
             const data = await res.json();
-            setQuestion(data.question);
-            setQnaId(data.qnaId);
+            setQuestion(data[0].question);
+            // setQnaId(data);
             setScore(null);
 
             // speak via Vapi assistant
             vapiRef.current?.send({
                 type: "response.create",
-                response: { instructions: data.question },
+                response: { instructions: data[0].question },
             });
 
             return data;
@@ -189,17 +189,18 @@ export default function Page() {
         [interviewId]
     );
 
-    const setquestions = async () => {
+    const setquestions = useCallback(async () => {
         const res = await fetch("/api/interviews/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ interviewId, context: "" }),
         });
         const data = await res.json();
-        setQuestion(data.question);
-        setQnaId(data.qnaId);
-        setScore(null);
-    }
+        console.log(data);
+        setQuestion(data[0].question);
+        // setQnaId(data);
+        // setScore(null);
+    }, [interviewId])
 
 
     const apiAnswer = useCallback(async () => {

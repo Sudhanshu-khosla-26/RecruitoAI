@@ -15,27 +15,20 @@ export async function POST(req) {
         .limit(6)
         .get();
 
-    const history = qnaSnap.docs.reverse().map(d => d.data());
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-    const prompt = `
-You are a concise, professional interviewer. Ask exactly ONE next question.
-Keep it short (max 20 words). Avoid fluff.
+    const qnaSnapData = await Promise.all(qnaSnap.docs.map(d => d.data()));
+    console.log(qnaSnapData);
 
-Context:
-${JSON.stringify({ context, history }, null, 2)}
-`;
-    const res = await model.generateContent(prompt);
-    const question = res.response.text().trim();
 
-    const qnaRef = await adminDB.collection("interview_qna").add({
-        interviewId,
-        question,
-        answer: "",
-        score: 0,
-        feedback: "",
-        createdAt: new Date(),
-    });
 
-    return NextResponse.json({ qnaId: qnaRef.id, question });
+    // const qnaRef = await adminDB.collection("interview_qna").add({
+    //     interviewId,
+    //     question,
+    //     answer: "",
+    //     score: 0,
+    //     feedback: "",
+    //     createdAt: new Date(),
+    // });
+
+    return NextResponse.json(qnaSnapData);
 }
