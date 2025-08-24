@@ -43,7 +43,8 @@
     "sonner": "^2.0.7",
     "speechify": "^0.1.0",
     "tailwind-merge": "^3.3.1",
-    "three": "^0.179.1"
+    "three": "^0.179.1",
+    "wink-nlp-utils": "^2.1.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

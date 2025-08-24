@@ -33,10 +33,20 @@ const page = () => {
 
 
     // State to track which page to render
-    const [currentPage, setCurrentPage] = React.useState(() => {
-        const saved = window.sessionStorage.getItem('currentPage');
-        return saved !== null ? Number(saved) : 0;
-    });
+    const [currentPage, setCurrentPage] = useState(0);
+
+    // ✅ run only on client
+    useEffect(() => {
+        const saved = sessionStorage.getItem("currentPage");
+        if (saved !== null) {
+            setCurrentPage(Number(saved));
+        }
+    }, []);
+
+    useEffect(() => {
+        sessionStorage.setItem("currentPage", currentPage);
+    }, [currentPage]);
+
 
     React.useEffect(() => {
         window.sessionStorage.setItem('currentPage', currentPage);

@@ -2,17 +2,21 @@
 import { NextResponse } from "next/server"
 import { adminDB } from "@/lib/firebase-admin"
 import * as mammoth from "mammoth"
-import natural from "natural"   // ✅ NLP lib for TF-IDF
+import { string as strUtils } from "wink-nlp-utils"
 
-
+// ----------------- CONFIG -----------------
 const TECH_SKILLS = [
     "javascript", "typescript", "react", "nextjs", "angular", "vue",
     "node", "express", "mongodb", "postgresql", "mysql", "graphql",
     "docker", "kubernetes", "aws", "azure", "gcp", "java", "python", "django", "flask"
 ]
 
+// ----------------- HELPERS -----------------
 const extractSoftSkills = (jd) => {
-    const softKeywords = ["team", "leader", "collaborate", "communication", "problem-solving", "analytical", "adaptability"]
+    const softKeywords = [
+        "team", "leader", "collaborate", "communication",
+        "problem-solving", "analytical", "adaptability"
+    ]
     return softKeywords.filter((s) => jd.toLowerCase().includes(s))
 }
 
@@ -31,21 +35,38 @@ const extractKeywords = (jd) => {
     return { techMatches, education, yearsRequired }
 }
 
-// === Helper: Cosine Similarity via TF-IDF ===
-const computeSemanticSimilarity = (resume, jd) => {
-    const tfidf = new natural.TfIdf()
-    tfidf.addDocument(resume)
-    tfidf.addDocument(jd)
+// ----------------- TEXT VECTORS -----------------
+const tokenize = (text) => {
+    // Clean & tokenize using wink
+    return strUtils
+        .tokenize0(text.toLowerCase())
+        .filter((t) => t.trim() && t.length > 1) // remove empty/single-char
+}
 
+const termFreq = (tokens) => {
+    const freq = {}
+    tokens.forEach((t) => {
+        freq[t] = (freq[t] || 0) + 1
+    })
+    return freq
+}
+
+const computeCosineSimilarity = (text1, text2) => {
+    const tokens1 = tokenize(text1)
+    const tokens2 = tokenize(text2)
+
+    const freq1 = termFreq(tokens1)
+    const freq2 = termFreq(tokens2)
+
+    const allTerms = new Set([...Object.keys(freq1), ...Object.keys(freq2)])
     const v1 = []
     const v2 = []
-    tfidf.listTerms(0).forEach(term => {
-        v1.push(term.tfidf)
-        const jdTerm = tfidf.tfidf(term.term, 1)
-        v2.push(jdTerm)
+
+    allTerms.forEach((term) => {
+        v1.push(freq1[term] || 0)
+        v2.push(freq2[term] || 0)
     })
 
-    // cosine similarity
     const dot = v1.reduce((acc, x, i) => acc + x * v2[i], 0)
     const mag1 = Math.sqrt(v1.reduce((acc, x) => acc + x * x, 0))
     const mag2 = Math.sqrt(v2.reduce((acc, x) => acc + x * x, 0))
@@ -53,12 +74,11 @@ const computeSemanticSimilarity = (resume, jd) => {
     return (dot / (mag1 * mag2 || 1)) * 100
 }
 
-// === Helper: Recency ===
 const computeRecency = (resumeText) => {
     const years = resumeText.match(/20\d{2}/g)
     if (!years) return 50
 
-    const latestYear = Math.max(...years.map(y => parseInt(y)))
+    const latestYear = Math.max(...years.map((y) => parseInt(y)))
     const currentYear = new Date().getFullYear()
     const diff = currentYear - latestYear
 
@@ -67,6 +87,7 @@ const computeRecency = (resumeText) => {
     return 40
 }
 
+// ----------------- MAIN HANDLER -----------------
 export async function POST(req) {
     try {
         const formData = await req.formData()
@@ -97,15 +118,14 @@ export async function POST(req) {
         }
 
         const resumeLower = resumeText.toLowerCase()
-
         const { techMatches, education, yearsRequired } = extractKeywords(jobDescription)
         const softSkillKeywords = extractSoftSkills(jobDescription)
 
-        // === Skills
+        // --- Skills ---
         const matchedSkills = techMatches.filter((s) => resumeLower.includes(s))
         const skillMatch = (matchedSkills.length / (techMatches.length || 1)) * 100
 
-        // === Education & GPA
+        // --- Education & GPA ---
         let educationMatch = 50
         if (education.some((e) => resumeLower.includes(e))) educationMatch = 80
         const gpaMatch = resumeText.match(/(\d+(\.\d+)?)/)
@@ -114,7 +134,7 @@ export async function POST(req) {
             if (gpa >= 8) educationMatch = 95
         }
 
-        // === Experience
+        // --- Experience ---
         let experienceMatch = 30
         let resumeYears = 0
         if (yearsRequired) {
@@ -130,31 +150,28 @@ export async function POST(req) {
             experienceMatch = 70
         }
 
-        // === Projects
+        // --- Projects ---
         const projectRelevance = resumeLower.includes("project") ? 80 : 40
 
-        // === Achievements
+        // --- Achievements ---
         const achievements = resumeLower.includes("%") || resumeLower.match(/award|lead|rank/i)
             ? 80 : 40
 
-        // === Soft Skills
-
+        // --- Soft Skills ---
         let softSkillsMatch = 30
         let matchedSoftSkills = []
-
         if (softSkillKeywords.length > 0) {
             matchedSoftSkills = softSkillKeywords.filter((kw) => resumeLower.includes(kw))
             softSkillsMatch = Math.round((matchedSoftSkills.length / softSkillKeywords.length) * 100)
         }
 
+        // --- Semantic Similarity ---
+        const semanticRelevance = computeCosineSimilarity(resumeText, jobDescription)
 
-        // === Semantic Similarity (TF-IDF cosine)
-        const semanticRelevance = computeSemanticSimilarity(resumeText, jobDescription)
-
-        // === Recency
+        // --- Recency ---
         const recency = computeRecency(resumeText)
 
-        // === Final Weighted Score
+        // --- Final Weighted Score ---
         const totalScore = Math.round(
             0.3 * skillMatch +
             0.2 * experienceMatch +
@@ -166,27 +183,8 @@ export async function POST(req) {
             0.05 * recency
         )
 
-        await adminDB.collection("matches").add({
-            userId,
-            jobId,
-            totalScore,
-            breakdown: {
-                skillMatch,
-                matchedSkills,
-                experienceMatch,
-                resumeYears,
-                yearsRequired,
-                educationMatch,
-                projectRelevance,
-                achievements,
-                matchedSoftSkills,
-                softSkillsMatch,
-                semanticRelevance: semanticRelevance.toFixed(1),
-                recency
-            },
-            status: totalScore >= 70 ? "shortlisted" : "rejected",
-            createdAt: new Date(),
-        })
+        // Save to Firestore (uncomment when ready)
+        // await adminDB.collection("matches").add({ ... })
 
         return NextResponse.json({
             totalScore,
@@ -201,7 +199,7 @@ export async function POST(req) {
             matchedSoftSkills,
             softSkillsMatch,
             semanticRelevance: semanticRelevance.toFixed(1),
-            recency
+            recency,
         })
     } catch (err) {
         console.error("Error in matching:", err)
