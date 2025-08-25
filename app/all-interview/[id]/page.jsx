@@ -11,46 +11,38 @@ import { Mic, Video, Monitor, User } from "lucide-react";
 import Webcam from "react-webcam";
 import Sidebar from "@/components/sidebar";
 import { useParams } from "next/navigation";
-import { auth } from "@/lib/firebase"; // ✅ Firebase client SDK
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPIAI_API_KEY;
 
-
-
 function Avatar({ stream }) {
-    const { scene } = useGLTF(
-        "/3d-interviewer.glb"
-    );
+    const { scene } = useGLTF("/3d-interviewer.glb");
     const analyserRef = useRef(null);
     const meshRef = useRef(null);
     const smoothVolume = useRef(0);
-
     const blinkTimer = useRef(0);
     const headRef = useRef(null);
     const headTargetRotation = useRef({ x: 0, y: 0 });
     const headTimer = useRef(0);
 
-    // connect WebAudio to the live remote stream for lipsync
+    // Connect WebAudio to the live remote stream for lipsync
     useEffect(() => {
         if (!stream) return;
 
         const listener = new THREE.AudioListener();
-        // Attach listener to a temp camera-like object to own the context
         const temp = new THREE.Camera();
         temp.add(listener);
 
         const audio = new THREE.Audio(listener);
         const ctx = (listener.context || listener).audioContext || listener.context;
-        const audioContext =
-            ctx ? ctx : new (window.AudioContext || (window).webkitAudioContext)();
+        const audioContext = ctx || new (window.AudioContext || window.webkitAudioContext)();
 
         const source = audioContext.createMediaStreamSource(stream);
-        // @ts-ignore - Three allows node source
-        audio.setNodeSource?.(source); // modern three
-        // Fallback for older three
-        // @ts-ignore
-        if (!audio.getOutput && audio.setMediaStreamSource) audio.setMediaStreamSource(stream);
+        audio.setNodeSource?.(source);
+        if (!audio.getOutput && audio.setMediaStreamSource) {
+            audio.setMediaStreamSource(stream);
+        }
 
         const analyser = new THREE.AudioAnalyser(audio, 64);
         analyserRef.current = analyser;
@@ -59,17 +51,25 @@ function Avatar({ stream }) {
             analyserRef.current = null;
             try {
                 source.disconnect();
-            } catch { }
+            } catch (e) {
+                console.warn("Error disconnecting source:", e);
+            }
             try {
                 audio?.disconnect?.();
-            } catch { }
+            } catch (e) {
+                console.warn("Error disconnecting audio:", e);
+            }
             try {
-                (audioContext.state === "running") && audioContext.close();
-            } catch { }
+                if (audioContext.state === "running") {
+                    audioContext.close();
+                }
+            } catch (e) {
+                console.warn("Error closing audio context:", e);
+            }
         };
     }, [stream]);
 
-    // find head mesh & bone
+    // Find head mesh & bone
     useEffect(() => {
         scene.traverse((child) => {
             if (child.isMesh && child.morphTargetDictionary && /Head/i.test(child.name)) {
@@ -89,24 +89,23 @@ function Avatar({ stream }) {
         const influences = mesh.morphTargetInfluences;
         if (!dict || !influences) return;
 
-        // lipsync from analyser
+        // Lipsync from analyser
         let volume = 0;
         if (analyserRef.current) {
-            volume = analyserRef.current.getAverageFrequency() / 200; // normalise
+            volume = analyserRef.current.getAverageFrequency() / 200;
             smoothVolume.current += (volume - smoothVolume.current) * 0.3;
-            // reset all morphs we touch
-            if (typeof influences.fill === "function") {
-                // only touch mouth/eyes we use instead of fill(0) (safer glTFs)
-                if (dict["jawOpen"] !== undefined) influences[dict["jawOpen"]] = 0;
-                if (dict["eyeBlinkLeft"] !== undefined) influences[dict["eyeBlinkLeft"]] = 0;
-                if (dict["eyeBlinkRight"] !== undefined) influences[dict["eyeBlinkRight"]] = 0;
-            }
+
+            // Reset morphs
+            if (dict["jawOpen"] !== undefined) influences[dict["jawOpen"]] = 0;
+            if (dict["eyeBlinkLeft"] !== undefined) influences[dict["eyeBlinkLeft"]] = 0;
+            if (dict["eyeBlinkRight"] !== undefined) influences[dict["eyeBlinkRight"]] = 0;
+
             if (dict["jawOpen"] !== undefined) {
                 influences[dict["jawOpen"]] = volume > 0.05 ? Math.min(smoothVolume.current, 1) : 0;
             }
         }
 
-        // natural blinking
+        // Natural blinking
         blinkTimer.current -= delta;
         if (blinkTimer.current <= 0 && dict) {
             if (dict["eyeBlinkLeft"] !== undefined && dict["eyeBlinkRight"] !== undefined) {
@@ -121,7 +120,7 @@ function Avatar({ stream }) {
             blinkTimer.current = 3 + Math.random() * 3;
         }
 
-        // gentle head tilts
+        // Gentle head tilts
         headTimer.current -= delta;
         if (headTimer.current <= 0) {
             headTargetRotation.current = {
@@ -130,6 +129,7 @@ function Avatar({ stream }) {
             };
             headTimer.current = 4 + Math.random() * 4;
         }
+
         if (headRef.current) {
             headRef.current.rotation.x += (headTargetRotation.current.x - headRef.current.rotation.x) * 0.02;
             headRef.current.rotation.y += (headTargetRotation.current.y - headRef.current.rotation.y) * 0.02;
@@ -144,7 +144,6 @@ function Avatar({ stream }) {
 }
 
 export default function Page() {
-
     const [questions, setQuestions] = useState([
         {
             "interviewId": "SkWRoKjHG4dBrSiLiUUk",
@@ -211,362 +210,329 @@ export default function Page() {
                 "_seconds": 1756072222,
                 "_nanoseconds": 18000000
             }
-        }
-    ]);   // full array of objects
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [interviewInfo, setinterviewInfo] = useState([])
-    const [qnaId, setQnaId] = useState(null);
+        }]);
+    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+    const [interviewInfo, setInterviewInfo] = useState(null);
     const [answer, setAnswer] = useState("");
     const [log, setLog] = useState([]);
     const [score, setScore] = useState(null);
     const [vapiStatus, setVapiStatus] = useState("idle");
     const [remoteStream, setRemoteStream] = useState(null);
-    const { id: interviewId } = useParams();
     const [user, setUser] = useState(null);
-    // Vapi instance
-    const vapiRef = useRef(null);
+    const [isInterviewStarted, setIsInterviewStarted] = useState(false);
 
-    // ---- helpers that talk to your Firebase-backed API routes ----
+    const { id: interviewId } = useParams();
+    const vapiRef = useRef(null);
+    const startedRef = useRef(false);
+
+    // Get current question
+    const currentQuestion = questions[currentQuestionIndex] || null;
+
+    // API helpers
     const apiStart = useCallback(async (id) => {
-        await fetch("/api/interviews/start", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ interviewId: id }),
-        });
+        try {
+            const response = await fetch("/api/interviews/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ interviewId: id }),
+            });
+            if (!response.ok) throw new Error("Failed to start interview");
+            return await response.json();
+        } catch (error) {
+            console.error("Error starting interview:", error);
+            throw error;
+        }
     }, []);
 
-    const apiAsk = useCallback(
-        async (context = "") => {
-            // const res = await fetch("/api/interviews/ask", {
-            //     method: "POST",
-            //     headers: { "Content-Type": "application/json" },
-            //     body: JSON.stringify({ interviewId, context }),
-            // });
-            // const data = await res.json();
-            // setQuestions(data[0].question);
-            // // setQnaId(data);
-            // setScore(null);
+    const apiGetQuestions = useCallback(async () => {
+        try {
+            const response = await fetch("/api/interviews/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ interviewId }),
+            });
+            // if (!response.ok) throw new Error("Failed to fetch questions");
+            const data = await response.json();
+            setQuestions(data || []);
+            return data;
+        } catch (error) {
+            console.error("Error fetching questions:", error);
+            // Fallback questions if API fails
+            setQuestions([
+                { id: 1, question: "Tell me about yourself and your experience." },
+                { id: 2, question: "What are your strengths and weaknesses?" },
+                { id: 3, question: "Why do you want to work here?" }
+            ]);
+        }
+    }, [interviewId]);
 
-            // speak via Vapi assistant
+    const apiAnswer = useCallback(async (questionId, questionText, answerText) => {
+        try {
+            const response = await fetch("/api/interviews/answer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    qnaId: questionId,
+                    question: questionText,
+                    answer: answerText
+                }),
+            });
+            if (!response.ok) throw new Error("Failed to submit answer");
+            const data = await response.json();
+            setScore(data.score);
+            setLog((prev) => [...prev, `Score: ${data.score} | Feedback: ${data.feedback}`]);
+
+            // Assistant gives feedback
             vapiRef.current?.send({
                 type: "response.create",
-                response: { instructions: questions[0].question },
+                response: {
+                    instructions: `Thanks. ${data.feedback}. Your score is ${data.score} out of 100.`,
+                },
             });
 
             return data;
-        },
-        [interviewId, questions]
-    );
-
-    const setquestions = useCallback(async () => {
-        const res = await fetch("/api/interviews/ask", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ interviewId, context: "" }),
-        });
-        const data = await res.json();
-
-        // Sort by createdAt ascending
-        const sorted = [...data].sort((a, b) => a.createdAt._seconds - b.createdAt._seconds);
-
-        setQuestions(sorted);
-        setCurrentIndex(0);
-
-        // Speak first question
-        if (sorted.length > 0) {
-            vapiRef.current?.send({
-                type: "response.create",
-                response: { instructions: sorted[0].question },
-            });
+        } catch (error) {
+            console.error("Error submitting answer:", error);
+            setLog((prev) => [...prev, "Error submitting answer. Please try again."]);
         }
-    }, [interviewId]);
-
-    const apiAnswer = useCallback(async () => {
-        if (!qnaId) return null;
-        const res = await fetch("/api/interviews/answer", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ qnaId, questions, answer }),
-        });
-        const data = await res.json();
-        setScore(data.score);
-        setLog((prev) => [...prev, `score: ${data.score} | feedback: ${data.feedback}`]);
-
-        // assistant gives feedback aloud
-        vapiRef.current?.send({
-            type: "response.create",
-            response: {
-                instructions: `Thanks. ${data.feedback}. Your score is ${data.score} out of 100.`,
-            },
-        });
-
-        return data;
-    }, [qnaId, questions, answer]);
-
-    const apiEnd = useCallback(async (id) => {
-        await fetch("/api/interviews/end", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ interviewId: id }),
-        });
     }, []);
-
-    // console.log("user", user);
 
     const apiGetInterview = useCallback(async () => {
         if (!interviewId) return;
-        const res = await fetch("/api/interviews/get", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ interviewId }),
-        });
-        const data = await res.json();
-        console.log(data);
-        setinterviewInfo(data);
+
+        try {
+            const response = await fetch("/api/interviews/get", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ interviewId }),
+            });
+            // if (!response.ok) throw new Error("Failed to get interview info");
+            const data = await response.json();
+            setInterviewInfo(data);
+        } catch (error) {
+            console.error("Error fetching interview info:", error);
+            // Set fallback info
+            setInterviewInfo({ title: "Technical Interview", description: "General interview" });
+        }
     }, [interviewId]);
 
-    // Fetch interview info when interviewId is available
-    useEffect(() => {
-        if (interviewId) {
-            apiGetInterview();
+    const apiEnd = useCallback(async (id) => {
+        try {
+            await fetch("/api/interviews/end", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ interviewId: id }),
+            });
+        } catch (error) {
+            console.error("Error ending interview:", error);
         }
-    }, [interviewId, apiGetInterview]);
+    }, []);
 
-
-
-
-    // ---- Vapi lifecycle ----
+    // Auth state
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
             setUser(firebaseUser);
         });
+        return unsubscribe;
+    }, []);
 
+    // Fetch interview info and questions
+    useEffect(() => {
+        if (interviewId && !isInterviewStarted) {
+            apiGetInterview();
+            apiGetQuestions();
+        }
+    }, [interviewId, apiGetInterview, apiGetQuestions, isInterviewStarted]);
+
+    // Initialize Vapi
+    useEffect(() => {
         if (!VAPI_PUBLIC_KEY) {
-            console.error("Missing NEXT_PUBLIC_VAPIAI_API_KEY / NEXT_PUBLIC_VAPI_PUBLIC_KEY");
+            console.error("Missing NEXT_PUBLIC_VAPIAI_API_KEY");
             return;
         }
-        const v = new Vapi(VAPI_PUBLIC_KEY);
-        vapiRef.current = v;
+
+        const vapi = new Vapi(VAPI_PUBLIC_KEY);
+        vapiRef.current = vapi;
 
         const handleCallStart = (call) => {
             setVapiStatus("connected");
-            if (call?.remoteMediaStream) setRemoteStream(call.remoteMediaStream);
-        };
-        const handleCallEnd = () => setVapiStatus("ended");
-        const handleTranscript = (t) => {
-            setLog((prev) => [...prev, `${t.role}: ${t.text}`]);
-            if (t.role === "user") setAnswer(t.text);
-        };
-        const handleMessage = (m) => {
-            if (m?.message) setLog((prev) => [...prev, `assistant: ${m.message}`]);
-        };
-        const handleError = (err) => {
-            console.error("Vapi error:", err);
-        };
-        const handleConn = (state) => {
-            if (state === "disconnected" || state === "failed") {
-                // optionally auto-reconnect
-                // v.restart();
+            if (call?.remoteMediaStream) {
+                setRemoteStream(call.remoteMediaStream);
             }
         };
 
-        v.on("call-start", handleCallStart);
-        v.on("call-end", handleCallEnd);
-        v.on("transcript", handleTranscript);
-        v.on("message", handleMessage);
-        v.on("error", handleError);
-        v.on("connection-state-changed", handleConn);
+        const handleCallEnd = () => {
+            setVapiStatus("ended");
+            setRemoteStream(null);
+        };
+
+        const handleTranscript = (transcript) => {
+            setLog((prev) => [...prev, `${transcript.role}: ${transcript.text}`]);
+            if (transcript.role === "user") {
+                setAnswer(transcript.text);
+            }
+        };
+
+        const handleMessage = (message) => {
+            if (message?.message) {
+                setLog((prev) => [...prev, `Assistant: ${message.message}`]);
+            }
+        };
+
+        const handleError = (error) => {
+            console.error("Vapi error:", error);
+            setLog((prev) => [...prev, `Error: ${error.message || "Unknown error"}`]);
+        };
+
+        vapi.on("call-start", handleCallStart);
+        vapi.on("call-end", handleCallEnd);
+        vapi.on("transcript", handleTranscript);
+        vapi.on("message", handleMessage);
+        vapi.on("error", handleError);
 
         return () => {
-            if (unsubscribe) unsubscribe();
             try {
-                v.stop();
-            } catch { }
-            v.removeAllListeners();
+                vapi.stop();
+            } catch (e) {
+                console.warn("Error stopping Vapi:", e);
+            }
+            vapi.removeAllListeners();
             vapiRef.current = null;
-            setRemoteStream(null);
         };
     }, []);
 
-    const startedRef = useRef(false);
-
+    // Start interview
     useEffect(() => {
-        (async () => {
-            if (!interviewId || !vapiRef.current || startedRef.current) return;
+        const startInterview = async () => {
+            if (!interviewId || !vapiRef.current || startedRef.current || questions.length === 0) {
+                return;
+            }
+
             startedRef.current = true;
-
+            setIsInterviewStarted(true);
             setVapiStatus("connecting");
-            await apiStart(interviewId);
 
-            const assistantOptions = {
-                name: "AI Recruiter",
-                firstMessage: `Hi ${user?.displayName || "there"}, how are you? Ready for your interview on ${interviewInfo?.title || "your role"}?`,
-                transcriber: {
-                    provider: "deepgram",
-                    model: "nova-2",
-                    language: "en-US",
-                },
-                voice: {
-                    provider: "playht",
-                    voiceId: "jennifer",
-                },
-                model: {
-                    provider: "openai",
-                    model: "gpt-4",
-                    messages: [
-                        {
-                            role: "system",
-                            content: `
-You are an AI interviewer.
+            try {
+                await apiStart(interviewId);
 
-⚡ RULES:
-- You do NOT generate your own questions.
-- The interviewer app will provide questions one by one.
-- After the candidate answers, you only give short encouragement or feedback.
-- Example feedback:
-  • "Nice! That’s a solid answer."
-  • "Hmm, not quite! Want to try again?"
-  • "Thanks for sharing that example."
+                const assistantOptions = {
+                    name: "AI Recruiter",
+                    firstMessage: `Hi ${user?.displayName || "there"}, how are you? Ready for your interview for ${interviewInfo?.title || "this position"}?`,
+                    transcriber: {
+                        provider: "deepgram",
+                        model: "nova-2",
+                        language: "en-US",
+                    },
+                    voice: {
+                        provider: "playht",
+                        voiceId: "jennifer",
+                    },
+                    model: {
+                        provider: "openai",
+                        model: "gpt-4",
+                        messages: [
+                            {
+                                role: "system",
+                                content: `You are an AI voice assistant conducting interviews for ${interviewInfo?.title || "this position"}.
 
-🎤 Conversational style:
-- Keep feedback friendly, casual, and natural — like a real person.
-- Use phrases like "Alright, let’s move on…" or "Good example!" when responding.
-- If the candidate struggles, gently encourage or suggest they think differently, but do not invent or replace the question.
+Your job is to ask the provided interview questions one by one and provide encouraging feedback.
 
-🚀 Interview flow:
-1. App gives you a question → you speak it.
-2. Wait for the candidate’s response.
-3. Give feedback.
-4. Wait for the app to provide the next question.
-5. After all questions are done, wrap up positively (e.g., "That was great! Thanks for completing this interview. Keep practicing and good luck!").
-        `.trim(),
-                        },
-                    ],
-                },
-            };
+Here are the questions to ask in order:
+${questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')}
 
-            await vapiRef.current.start(assistantOptions);
+Guidelines:
+- Ask one question at a time and wait for the candidate's response
+- Provide brief, encouraging feedback after each answer
+- Keep the conversation natural and engaging
+- If the candidate struggles, offer hints without giving away the answer
+- Be friendly, professional, and supportive
+- After all questions, wrap up the interview positively
 
-            // await vapiRef.current.connect();
+Current question: ${currentQuestion?.question || "No questions available"}`,
+                            },
+                        ],
+                    },
+                };
 
-            vapiRef.current.on("call-start", async () => {
-                setVapiStatus("connected");
-                if (questions && questions.length > 0) {
-                    await apiAsk("start the interview"); // ask first question automatically
+                await vapiRef.current.start(assistantOptions);
+
+                // Ask first question via Vapi
+                if (currentQuestion) {
+                    setTimeout(() => {
+                        vapiRef.current?.send({
+                            type: "response.create",
+                            response: {
+                                instructions: `Let's start with the first question: ${currentQuestion.question}`
+                            },
+                        });
+                    }, 2000); // Wait 2 seconds after greeting
                 }
-            });
 
-            vapiRef.current.on("call-end", () => {
-                setVapiStatus("disconnected");
-            });
-        })();
-    }, [interviewId, user, interviewInfo, questions]);
+            } catch (error) {
+                console.error("Error starting interview:", error);
+                setVapiStatus("idle");
+                startedRef.current = false;
+                setIsInterviewStarted(false);
+            }
+        };
 
+        startInterview();
+    }, [interviewId, user, interviewInfo, questions, currentQuestion, apiStart]);
 
-    //     // boot: start interview, start assistant, ask first
-    //     useEffect(() => {
-    //         (async () => {
-    //             if (!interviewId || !vapiRef.current) return;
-    //             setVapiStatus("connecting");
+    // UI handlers
+    const submitAnswer = useCallback(async () => {
+        if (!currentQuestion || !answer.trim()) return;
 
-    //             await apiStart(interviewId);
-
-    //             const assistantOptions = {
-    //                 name: "AI Recruiter",
-    //                 firstMessage: "Hi " + user?.displayName + ", how are you? Ready for your interview on " + interviewInfo?.title,
-    //                 transcriber: {
-    //                     provider: "deepgram",
-    //                     model: "nova-2",
-    //                     language: "en-US",
-    //                 },
-    //                 voice: {
-    //                     provider: "playht",
-    //                     voiceId: "jennifer",
-    //                 },
-    //                 model: {
-    //                     provider: "openai",
-    //                     model: "gpt-4",
-    //                     messages: [
-    //                         {
-    //                             role: "system",
-    //                             content: `
-    //   You are an AI voice assistant conducting interviews.
-    // Your job is to ask candidates provided interview questions, assess their responses.
-    // Begin the conversation with a friendly introduction, setting a relaxed yet professional tone. Example:
-    // "Hey there! Welcome to your `+ interviewInfo?.title + ` interview. Let’s get started with a few questions!"
-    // Ask one question at a time and wait for the candidate’s response before proceeding. Keep the questions clear and concise. Below Are the questions ask one by one:
-    // Questions: `+ question + `  
-    // If the candidate struggles, offer hints or rephrase the question without giving away the answer. Example:
-    // "Need a hint? Think about how React tracks component updates!"
-    // Provide brief, encouraging feedback after each answer. Example:
-    // "Nice! That’s a solid answer."
-    // "Hmm, not quite! Want to try again?"
-    // Keep the conversation natural and engaging—use casual phrases like "Alright, next up..." or "Let’s tackle a tricky one!"
-    // After 5-7 questions, wrap up the interview smoothly by summarizing their performance. Example:
-    // "That was great! You handled some tough questions well. Keep sharpening your skills!"
-    // End on a positive note:
-    // "Thanks for chatting! Hope to see you crushing projects soon!"
-    // Key Guidelines:
-    // ✅ Be friendly, engaging, and witty 🎤
-    // ✅ Keep responses short and natural, like a real conversation
-    // ✅ Adapt based on the candidate’s confidence level
-    // ✅ Ensure the interview remains focused on React
-    // `.trim(),
-    //                         },
-    //                     ],
-    //                 },
-    //             };
-
-
-
-    //             await vapiRef.current.start(assistantOptions);
-
-    //             await apiAsk("Start of interview");
-    //         })();
-    //         // eslint-disable-next-line react-hooks/exhaustive-deps
-    //     }, [interviewId, interviewInfo]);
-
-    // ---- UI handlers ----
-    const submit = useCallback(async () => {
-        await apiAnswer();
+        await apiAnswer(currentQuestion.id, currentQuestion.question, answer);
         setAnswer("");
-    }, [apiAnswer]);
+    }, [currentQuestion, answer, apiAnswer]);
 
-    const askNext = useCallback(() => {
-        if (currentIndex + 1 < questions.length) {
-            const nextQ = questions[currentIndex + 1];
-            setCurrentIndex(prev => prev + 1);
+    const nextQuestion = useCallback(() => {
+        if (currentQuestionIndex < questions.length - 1) {
+            const nextIndex = currentQuestionIndex + 1;
+            setCurrentQuestionIndex(nextIndex);
+            const nextQ = questions[nextIndex];
 
+            // Ask next question via Vapi
             vapiRef.current?.send({
                 type: "response.create",
-                response: { instructions: nextQ.question },
+                response: {
+                    instructions: `Next question: ${nextQ.question}`
+                },
             });
+
+            setScore(null);
         } else {
+            // No more questions
             vapiRef.current?.send({
                 type: "response.create",
-                response: { instructions: "That was the last question. Thanks for completing the interview!" },
+                response: {
+                    instructions: "That was the last question. Thank you for the interview! We'll be in touch soon."
+                },
             });
         }
-    }, [currentIndex, questions]);
-
+    }, [currentQuestionIndex, questions]);
 
     const endInterview = useCallback(async () => {
-        if (interviewId) await apiEnd(interviewId);
-        vapiRef.current?.stop();
+        if (interviewId) {
+            await apiEnd(interviewId);
+        }
+
+        try {
+            vapiRef.current?.stop();
+        } catch (e) {
+            console.warn("Error stopping Vapi:", e);
+        }
+
+        setVapiStatus("ended");
     }, [apiEnd, interviewId]);
 
-
-
-
-
-    const statusBadge =
-        vapiStatus === "connected"
-            ? { text: "Interview is in process", className: "bg-green-50 text-green-700" }
-            : vapiStatus === "connecting"
-                ? { text: "Connecting interview...", className: "bg-yellow-50 text-yellow-700" }
-                : vapiStatus === "ended"
-                    ? { text: "Interview ended", className: "bg-gray-100 text-gray-700" }
-                    : { text: "Idle", className: "bg-gray-100 text-gray-700" };
+    const statusBadge = {
+        connected: { text: "Interview in progress", className: "bg-green-50 text-green-700" },
+        connecting: { text: "Connecting...", className: "bg-yellow-50 text-yellow-700" },
+        ended: { text: "Interview ended", className: "bg-gray-100 text-gray-700" },
+        idle: { text: "Preparing interview...", className: "bg-gray-100 text-gray-700" }
+    }[vapiStatus];
 
     return (
         <div className="flex min-h-screen w-screen bg-gray-50">
@@ -577,7 +543,7 @@ You are an AI interviewer.
                     <div className="flex items-center justify-between">
                         <div className="flex justify-between w-full items-center gap-4">
                             <span className="text-gray-600">
-                                Welcome, <span className="text-blue-600 font-medium">Candidate</span>
+                                Welcome, <span className="text-blue-600 font-medium">{user?.displayName || "Candidate"}</span>
                             </span>
                             <Button variant="ghost" size="sm" className="w-8 h-8 hover:bg-gray-300 text-black rounded-full border border-black">
                                 <User className="w-4 h-4 rounded-full text-black" />
@@ -649,8 +615,18 @@ You are an AI interviewer.
 
                     {/* Q/A Panel */}
                     <div className="bg-white rounded-xl border p-4 mb-4">
-                        <div className="text-sm text-gray-500">Current question</div>
-                        <div className="text-lg font-medium mb-3">{questions[0]?.question || "Waiting..."}</div>
+                        <div className="flex justify-between items-center mb-2">
+                            <div className="text-sm text-gray-500">
+                                Question {currentQuestionIndex + 1} of {questions.length}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                                Interview: {interviewInfo?.title || "Loading..."}
+                            </div>
+                        </div>
+
+                        <div className="text-lg font-medium mb-3">
+                            {currentQuestion?.question || "Loading questions..."}
+                        </div>
 
                         <textarea
                             className="w-full border rounded-lg p-3 text-sm"
@@ -659,10 +635,20 @@ You are an AI interviewer.
                             value={answer}
                             onChange={(e) => setAnswer(e.target.value)}
                         />
+
                         <div className="flex gap-3 mt-3">
-                            <Button onClick={submit} disabled={!answer.trim()}>Submit Answer</Button>
-                            <Button variant="outline" onClick={askNext}>
-                                Ask Next Question
+                            <Button
+                                onClick={submitAnswer}
+                                disabled={!answer.trim() || !currentQuestion}
+                            >
+                                Submit Answer
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={nextQuestion}
+                                disabled={currentQuestionIndex >= questions.length - 1}
+                            >
+                                Next Question ({currentQuestionIndex + 1}/{questions.length})
                             </Button>
                             <Button variant="destructive" onClick={endInterview}>
                                 End Interview
@@ -674,17 +660,25 @@ You are an AI interviewer.
                                 Score: <span className="font-semibold">{score}</span> / 100
                             </div>
                         )}
-                        <div className="bg-gray-100 rounded-lg p-3 mt-4 text-sm max-h-40 overflow-y-auto">
-                            {log.map((l, i) => <div key={i}>{l}</div>)}
-                        </div>
 
+                        <div className="bg-gray-100 rounded-lg p-3 mt-4 text-sm max-h-40 overflow-y-auto">
+                            {log.length === 0 ? (
+                                <div className="text-gray-500">Conversation log will appear here...</div>
+                            ) : (
+                                log.map((entry, index) => (
+                                    <div key={index} className="mb-1">{entry}</div>
+                                ))
+                            )}
+                        </div>
                     </div>
                 </main>
 
                 {/* Footer */}
                 <footer className="bg-white border-t border-gray-200 px-6 py-4">
                     <div className="flex items-center justify-end max-w-7xl mx-auto">
-                        <p className="text-sm text-gray-500">Once the call ends, feedback will be shared with the recruiter.</p>
+                        <p className="text-sm text-gray-500">
+                            Once the call ends, feedback will be shared with the recruiter.
+                        </p>
                     </div>
                 </footer>
             </div>
