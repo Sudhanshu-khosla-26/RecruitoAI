@@ -144,7 +144,76 @@ function Avatar({ stream }) {
 }
 
 export default function Page() {
-    const [question, setQuestion] = useState([]);
+
+    const [questions, setQuestions] = useState([
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "What did you learn from this entire experience?",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072542,
+                "_nanoseconds": 980000000
+            }
+        },
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "What was the outcome after implementing those actions?",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072535,
+                "_nanoseconds": 881000000
+            }
+        },
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "What specific actions did you take based on the feedback?",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072282,
+                "_nanoseconds": 23000000
+            }
+        },
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "How did you respond to that feedback?",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072275,
+                "_nanoseconds": 30000000
+            }
+        },
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "Tell me about a time you received critical feedback.",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072229,
+                "_nanoseconds": 554000000
+            }
+        },
+        {
+            "interviewId": "SkWRoKjHG4dBrSiLiUUk",
+            "question": "Can you give me a different example of a failure?",
+            "answer": "",
+            "score": 0,
+            "feedback": "",
+            "createdAt": {
+                "_seconds": 1756072222,
+                "_nanoseconds": 18000000
+            }
+        }
+    ]);   // full array of objects
+    const [currentIndex, setCurrentIndex] = useState(0);
     const [interviewInfo, setinterviewInfo] = useState([])
     const [qnaId, setQnaId] = useState(null);
     const [answer, setAnswer] = useState("");
@@ -168,25 +237,25 @@ export default function Page() {
 
     const apiAsk = useCallback(
         async (context = "") => {
-            const res = await fetch("/api/interviews/ask", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ interviewId, context }),
-            });
-            const data = await res.json();
-            setQuestion(data[0].question);
-            // setQnaId(data);
-            setScore(null);
+            // const res = await fetch("/api/interviews/ask", {
+            //     method: "POST",
+            //     headers: { "Content-Type": "application/json" },
+            //     body: JSON.stringify({ interviewId, context }),
+            // });
+            // const data = await res.json();
+            // setQuestions(data[0].question);
+            // // setQnaId(data);
+            // setScore(null);
 
             // speak via Vapi assistant
             vapiRef.current?.send({
                 type: "response.create",
-                response: { instructions: data[0].question },
+                response: { instructions: questions[0].question },
             });
 
             return data;
         },
-        [interviewId]
+        [interviewId, questions]
     );
 
     const setquestions = useCallback(async () => {
@@ -196,19 +265,28 @@ export default function Page() {
             body: JSON.stringify({ interviewId, context: "" }),
         });
         const data = await res.json();
-        console.log(data);
-        setQuestion(data[0].question);
-        // setQnaId(data);
-        // setScore(null);
-    }, [interviewId])
 
+        // Sort by createdAt ascending
+        const sorted = [...data].sort((a, b) => a.createdAt._seconds - b.createdAt._seconds);
+
+        setQuestions(sorted);
+        setCurrentIndex(0);
+
+        // Speak first question
+        if (sorted.length > 0) {
+            vapiRef.current?.send({
+                type: "response.create",
+                response: { instructions: sorted[0].question },
+            });
+        }
+    }, [interviewId]);
 
     const apiAnswer = useCallback(async () => {
         if (!qnaId) return null;
         const res = await fetch("/api/interviews/answer", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ qnaId, question, answer }),
+            body: JSON.stringify({ qnaId, questions, answer }),
         });
         const data = await res.json();
         setScore(data.score);
@@ -223,7 +301,7 @@ export default function Page() {
         });
 
         return data;
-    }, [qnaId, question, answer]);
+    }, [qnaId, questions, answer]);
 
     const apiEnd = useCallback(async (id) => {
         await fetch("/api/interviews/end", {
@@ -319,8 +397,6 @@ export default function Page() {
 
             setVapiStatus("connecting");
             await apiStart(interviewId);
-            await setquestions();
-
 
             const assistantOptions = {
                 name: "AI Recruiter",
@@ -341,36 +417,50 @@ export default function Page() {
                         {
                             role: "system",
                             content: `
-  You are an AI voice assistant conducting interviews.
-Your job is to ask candidates provided interview questions, assess their responses.
-Begin the conversation with a friendly introduction, setting a relaxed yet professional tone. Example:
-"Hey there! Welcome to your `+ interviewInfo?.title + ` interview. Let’s get started with a few questions!"
-Ask one question at a time and wait for the candidate’s response before proceeding. Keep the questions clear and concise. Below Are the questions ask one by one:
-Questions: `+ question + `  
-If the candidate struggles, offer hints or rephrase the question without giving away the answer. Example:
-"Need a hint? Think about how React tracks component updates!"
-Provide brief, encouraging feedback after each answer. Example:
-"Nice! That’s a solid answer."
-"Hmm, not quite! Want to try again?"
-Keep the conversation natural and engaging—use casual phrases like "Alright, next up..." or "Let’s tackle a tricky one!"
-After 5-7 questions, wrap up the interview smoothly by summarizing their performance. Example:
-"That was great! You handled some tough questions well. Keep sharpening your skills!"
-End on a positive note:
-"Thanks for chatting! Hope to see you crushing projects soon!"
-Key Guidelines:
-✅ Be friendly, engaging, and witty 🎤
-✅ Keep responses short and natural, like a real conversation
-✅ Adapt based on the candidate’s confidence level
-✅ Ensure the interview remains focused on React
-`.trim(),
+You are an AI interviewer.
+
+⚡ RULES:
+- You do NOT generate your own questions.
+- The interviewer app will provide questions one by one.
+- After the candidate answers, you only give short encouragement or feedback.
+- Example feedback:
+  • "Nice! That’s a solid answer."
+  • "Hmm, not quite! Want to try again?"
+  • "Thanks for sharing that example."
+
+🎤 Conversational style:
+- Keep feedback friendly, casual, and natural — like a real person.
+- Use phrases like "Alright, let’s move on…" or "Good example!" when responding.
+- If the candidate struggles, gently encourage or suggest they think differently, but do not invent or replace the question.
+
+🚀 Interview flow:
+1. App gives you a question → you speak it.
+2. Wait for the candidate’s response.
+3. Give feedback.
+4. Wait for the app to provide the next question.
+5. After all questions are done, wrap up positively (e.g., "That was great! Thanks for completing this interview. Keep practicing and good luck!").
+        `.trim(),
                         },
                     ],
                 },
             };
+
             await vapiRef.current.start(assistantOptions);
-            await apiAsk("Start of interview");
+
+            // await vapiRef.current.connect();
+
+            vapiRef.current.on("call-start", async () => {
+                setVapiStatus("connected");
+                if (questions && questions.length > 0) {
+                    await apiAsk("start the interview"); // ask first question automatically
+                }
+            });
+
+            vapiRef.current.on("call-end", () => {
+                setVapiStatus("disconnected");
+            });
         })();
-    }, [interviewId]);
+    }, [interviewId, user, interviewInfo, questions]);
 
 
     //     // boot: start interview, start assistant, ask first
@@ -442,9 +532,23 @@ Key Guidelines:
         setAnswer("");
     }, [apiAnswer]);
 
-    const askNext = useCallback(async () => {
-        await apiAsk("Next question");
-    }, [apiAsk]);
+    const askNext = useCallback(() => {
+        if (currentIndex + 1 < questions.length) {
+            const nextQ = questions[currentIndex + 1];
+            setCurrentIndex(prev => prev + 1);
+
+            vapiRef.current?.send({
+                type: "response.create",
+                response: { instructions: nextQ.question },
+            });
+        } else {
+            vapiRef.current?.send({
+                type: "response.create",
+                response: { instructions: "That was the last question. Thanks for completing the interview!" },
+            });
+        }
+    }, [currentIndex, questions]);
+
 
     const endInterview = useCallback(async () => {
         if (interviewId) await apiEnd(interviewId);
@@ -546,7 +650,7 @@ Key Guidelines:
                     {/* Q/A Panel */}
                     <div className="bg-white rounded-xl border p-4 mb-4">
                         <div className="text-sm text-gray-500">Current question</div>
-                        <div className="text-lg font-medium mb-3">{question || "Waiting..."}</div>
+                        <div className="text-lg font-medium mb-3">{questions[0]?.question || "Waiting..."}</div>
 
                         <textarea
                             className="w-full border rounded-lg p-3 text-sm"
